@@ -1,5 +1,5 @@
 # создаем простое streamlit приложение для работы с вашими pdf-файлами при помощи YaGPT
-
+import json
 import streamlit as st
 import tempfile
 import os
@@ -9,7 +9,7 @@ from yandex_chain import YandexLLM
 
 
 from langchain.prompts import PromptTemplate
-from langchain.document_loaders import DirectoryLoader, PyPDFLoader
+from langchain.document_loaders import DirectoryLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import OpenSearchVectorSearch
 
@@ -34,9 +34,15 @@ mdb_prefix = st.secrets["mdb_prefix"]
 
 # MDB_OS_CA = st.secrets["mdb_os_ca"] # 
 
+# Создаем функцию для записи вопросов из словаря в файл
+def write_questions_to_file(qa_dict, file_path):
+    with open(file_path, 'w', encoding='utf-8') as file:
+        for question in qa_dict.keys():
+            file.write(question + '\n')
+
 def ingest_docs(temp_dir: str = tempfile.gettempdir()):
     """
-    Инъекция ваших pdf файлов в MBD Opensearch
+    Инъекция ваших txt файлов с вопросами в MBD Opensearch
     """
     try:
         # выдать ошибку, если каких-то переменных не хватает
@@ -45,14 +51,17 @@ def ingest_docs(temp_dir: str = tempfile.gettempdir()):
                 "Пожалуйста укажите необходимый набор переменных окружения")
 
         # загрузить PDF файлы из временной директории
-        loader = DirectoryLoader(
-            temp_dir, glob="**/*.pdf", loader_cls=PyPDFLoader, recursive=True
-        )
+        loader = DirectoryLoader(temp_dir, 
+                         glob="**/*.txt",
+                         silent_errors=True,
+                         show_progress=True, 
+                         recursive=True,
+                         loader_cls=TextLoader)
         documents = loader.load()
 
         # разбиваем документы на блоки
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+            chunk_size=0, chunk_overlap=0)
         documents = text_splitter.split_documents(documents)
         print(len(documents))
         text_to_print = f"Ориентировочное время = {len(documents)} с."
@@ -105,7 +114,7 @@ def main():
     # Отображаем лого измененного небольшого размера
     st.image(resized_logo)
     # Указываем название и заголовок Streamlit приложения
-    st.title('Помощник службы поддержки на базе YandexGPT')
+    st.title('Помощник службы поддержки')
     # st.title('Игровая площадка на базе YandexGPT для построения Вопрос-Ответных Систем по PDF файлам')
     st.warning('Загружайте свои json-файлы c вопросами/ответами. Если вы уже загрузили свои файлы, то ***обязательно*** удалите их из списка загруженных и переходите к чату ниже.')
  
@@ -195,7 +204,7 @@ def main():
 
     # Загрузка pdf файлов
     uploaded_files = st.file_uploader(
-        "После загрузки файлов в формате pdf начнется их добавление в векторную базу данных MDB Opensearch.", accept_multiple_files=True, type=['pdf'])
+        "После загрузки файлов в формате pdf начнется их добавление в векторную базу данных MDB Opensearch.", accept_multiple_files=True, type=['json'])
 
     # если файлы загружены, сохраняем их во временную папку и потом заносим в vectorstore
     if uploaded_files:
@@ -204,9 +213,15 @@ def main():
             with tempfile.TemporaryDirectory() as temp_dir:
                 for uploaded_file in uploaded_files:
                     file_name = uploaded_file.name
-                    # сохраняем файл во временную папку
+                    # сохраняем файл вопросов во временную папку
                     with open(os.path.join(temp_dir, file_name), "wb") as f:
-                        f.write(uploaded_file.read())
+                        data = json.load(f)
+                        # Создание словаря вопрос-ответ
+                        qa_dictionary = {item['request']: item['response'] for item in data}
+                        # Записываем вопросы из словаря в файл
+                        output_file_path = os.path.join(temp_dir, "monitoring_questions_only.txt")
+                        write_questions_to_file(qa_dictionary, output_file_path)
+                        # f.write(uploaded_file.read())
                 # отображение спиннера во время инъекции файлов
                 with st.spinner("Добавление ваших файлов в базу ..."):
                     ingest_docs(temp_dir)
